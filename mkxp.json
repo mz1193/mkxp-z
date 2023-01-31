@@ -257,12 +257,14 @@
     // "customScript": "/path/to/script.rb",
 
 
-    // Define raw scripts to be executed before the
-    // actual Scripts.rxdata execution starts
+    // Define raw scripts (e.g. compatibility wrappers)
+    // to be executed before the actual Scripts.rxdata
+    // execution starts
     // (default: none)
     //
-    // "preloadScript": ["my_win32_wrapper.rb",
-    //                   "ruby18_fixes.rb"],
+    // "preloadScript": ["preload/ruby18_wrap.rb",
+    //                   "preload/mkxp_wrap.rb",
+    //                   "preload/win32_wrap.rb"],
 
 
     // Index all accesible assets via their lower case path
