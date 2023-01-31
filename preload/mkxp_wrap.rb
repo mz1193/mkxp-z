@@ -1,26 +1,13 @@
 # mkxp_wrap.rb
-#
-# This file is part of mkxp-z.
-#
-# Copyright (C) 2022 Splendide Imaginarius
-#
-# mkxp-z is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 2 of the License, or
-# (at your option) any later version.
-#
-# mkxp-z is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with mkxp-z.  If not, see <http://www.gnu.org/licenses/>.
+# Author: Splendide Imaginarius (2022)
+
+# Creative Commons CC0: To the extent possible under law, Splendide Imaginarius
+# has waived all copyright and related or neighboring rights to mkxp_wrap.rb.
+# https://creativecommons.org/publicdomain/zero/1.0/
 
 # This preload script provides functions that existed in Ancurio's mkxp, but
 # were renamed in mkxp-z, so that games (or other preload scripts) that expect
-# Ancurio's function names can find them. Use it via the "preloadScript" option
-# in mkxp.json.
+# Ancurio's function names can find them.
 
 module MKXP
 	def data_directory(*args)
