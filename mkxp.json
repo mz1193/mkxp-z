@@ -262,9 +262,9 @@
     // execution starts
     // (default: none)
     //
-    // "preloadScript": ["preload/ruby18_wrap.rb",
-    //                   "preload/mkxp_wrap.rb",
-    //                   "preload/win32_wrap.rb"],
+    // "preloadScript": ["scripts/preload/ruby18_wrap.rb",
+    //                   "scripts/preload/mkxp_wrap.rb",
+    //                   "scripts/preload/win32_wrap.rb"],
 
 
     // Index all accesible assets via their lower case path
