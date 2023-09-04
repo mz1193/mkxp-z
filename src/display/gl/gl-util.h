@@ -25,6 +25,14 @@
 #include "gl-fun.h"
 #include "etc-internal.h"
 
+#ifndef GL_CLAMP_TO_BORDER
+	#ifdef GL_CLAMP_TO_BORDER_NV
+		#define GL_CLAMP_TO_BORDER GL_CLAMP_TO_BORDER_NV
+	#else
+		#define GL_CLAMP_TO_BORDER GL_CLAMP_TO_EDGE
+	#endif
+#endif
+
 /* Struct wrapping GLuint for some light type safety */
 #define DEF_GL_ID \
 struct ID \
@@ -93,8 +101,8 @@ namespace TEX
 
 	static inline void setRepeat(bool mode)
 	{
-		gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, mode ? GL_REPEAT : GL_CLAMP_TO_EDGE);
-		gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, mode ? GL_REPEAT : GL_CLAMP_TO_EDGE);
+		gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, mode ? GL_REPEAT : GL_CLAMP_TO_BORDER);
+		gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, mode ? GL_REPEAT : GL_CLAMP_TO_BORDER);
 	}
 
 	static inline void setSmooth(bool mode)
