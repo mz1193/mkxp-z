@@ -355,6 +355,7 @@ void FileSystem::removePath(const char *path, bool reload) {
 struct CacheEnumData {
   FileSystemPrivate *p;
   std::stack<std::vector<std::string> *> fileLists;
+  std::set<std::string> seenDirs;
 
 #ifdef __APPLE__
   iconv_t nfc2nfd;
@@ -406,6 +407,11 @@ static PHYSFS_EnumerateCallbackResult cacheEnumCB(void *d, const char *origdir,
 
   std::string mixedCase(fullPath);
 
+  /* If we've already seen this mixed-case path, then we don't need to reenumerate it 
+   * A different case could have new stuff, though */
+  if (data.seenDirs.count(mixedCase))
+    return PHYSFS_ENUM_OK;
+
   /* FileSystem::normalize ensures that paths are NFD when looking for files on macOS 
    * Unfortunately, there's no guarantee the path actually is that,
    * especially when loading files from archives,
@@ -421,11 +427,14 @@ static PHYSFS_EnumerateCallbackResult cacheEnumCB(void *d, const char *origdir,
     /* Create a new list for this directory */
     std::vector<std::string> &list = data.p->fileLists[lowerCase];
 
+    /* Record that we've seen this directory */
+    data.seenDirs.insert(mixedCase);
+
     /* Iterate over its contents */
     data.fileLists.push(&list);
     PHYSFS_enumerate(mixedCase.c_str(), cacheEnumCB, d);
     data.fileLists.pop();
-  } else {
+  } else if (!data.p->pathCache.contains(lowerCase)) {
     /* Get the file list for the directory we're currently
      * traversing and append this filename to it */
     std::vector<std::string> &list = *data.fileLists.top();
