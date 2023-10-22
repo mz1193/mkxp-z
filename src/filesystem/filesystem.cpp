@@ -357,24 +357,24 @@ struct CacheEnumData {
   std::stack<std::vector<std::string> *> fileLists;
 
 #ifdef __APPLE__
-  iconv_t nfd2nfc;
+  iconv_t nfc2nfd;
   char buf[1024];
 #endif
 
   CacheEnumData(FileSystemPrivate *p) : p(p) {
 #ifdef __APPLE__
-    nfd2nfc = iconv_open("utf-8", "utf-8-mac");
+    nfc2nfd = iconv_open("utf-8-mac", "utf-8");
 #endif
   }
 
   ~CacheEnumData() {
 #ifdef __APPLE__
-    iconv_close(nfd2nfc);
+    iconv_close(nfc2nfd);
 #endif
   }
 
   /* Converts in-place */
-  void toNFC(char *inout) {
+  void toNFD(char *inout) {
 #ifdef __APPLE__
     size_t srcSize = strlen(inout);
     size_t bufSize = sizeof(buf);
@@ -384,7 +384,7 @@ struct CacheEnumData {
     /* Reserve room for null terminator */
     --bufSize;
 
-    iconv(nfd2nfc, &inoutPtr, &srcSize, &bufPtr, &bufSize);
+    iconv(nfc2nfd, &inoutPtr, &srcSize, &bufPtr, &bufSize);
     /* Null-terminate */
     *bufPtr = 0;
     strcpy(inout, buf);
@@ -404,15 +404,18 @@ static PHYSFS_EnumerateCallbackResult cacheEnumCB(void *d, const char *origdir,
   else
     snprintf(fullPath, sizeof(fullPath), "%s/%s", origdir, fname);
 
-  /* Deal with OSX' weird UTF-8 standards */
-  data.toNFC(fullPath);
-
   std::string mixedCase(fullPath);
-  std::string lowerCase = mixedCase;
+
+  /* FileSystem::normalize ensures that paths are NFD when looking for files on macOS 
+   * Unfortunately, there's no guarantee the path actually is that,
+   * especially when loading files from archives,
+   *  so we need to convert fname and fullPath in the path cache. */
+  data.toNFD(fullPath);
+  std::string lowerCase(fullPath);
   strTolower(lowerCase);
 
   PHYSFS_Stat stat;
-  PHYSFS_stat(fullPath, &stat);
+  PHYSFS_stat(mixedCase.c_str(), &stat);
 
   if (stat.filetype == PHYSFS_FILETYPE_DIRECTORY) {
     /* Create a new list for this directory */
@@ -420,14 +423,17 @@ static PHYSFS_EnumerateCallbackResult cacheEnumCB(void *d, const char *origdir,
 
     /* Iterate over its contents */
     data.fileLists.push(&list);
-    PHYSFS_enumerate(fullPath, cacheEnumCB, d);
+    PHYSFS_enumerate(mixedCase.c_str(), cacheEnumCB, d);
     data.fileLists.pop();
   } else {
     /* Get the file list for the directory we're currently
      * traversing and append this filename to it */
     std::vector<std::string> &list = *data.fileLists.top();
 
-    std::string lowerFilename(fname);
+    char fn[256];
+    strcpy(fn,fname);
+    data.toNFD(fn);
+    std::string lowerFilename(fn);
     strTolower(lowerFilename);
     list.push_back(lowerFilename);
 
