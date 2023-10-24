@@ -86,6 +86,7 @@
 
     // Apply Lanczos3 interpolation when game screen
     // is upscaled (typically higher quality than linear)
+    // Requires enableBlitting be set to false
     // (default: disabled)
     //
     // "lanczos3Scaling": false,
@@ -183,8 +184,8 @@
     // capable of it. Some drivers carry buggy
     // implementations of this functionality, so
     // disabling it can be used as a workaround.
-    // Does nothing on macOS.
-    // (default: disabled)
+    // Is force enabled on macOS.
+    // (default: disabled on windows, enabled on other systems)
     //
     // "enableBlitting": false,
 
