@@ -1910,7 +1910,6 @@ void Bitmap::hueChange(int hue)
 {
     guardDisposed();
     
-    GUARD_MEGA;
     GUARD_ANIMATED;
     
     if (hasHires()) {
@@ -1921,31 +1920,65 @@ void Bitmap::hueChange(int hue)
     if ((hue % 360) == 0)
         return;
     
-    TEXFBO newTex = shState->texPool().request(width(), height());
-    
-    FloatRect texRect(rect());
-    
-    Quad &quad = shState->gpQuad();
-    quad.setTexPosRect(texRect, texRect);
-    quad.setColor(Vec4(1, 1, 1, 1));
-    
-    HueShader &shader = shState->shaders().hue;
-    shader.bind();
-    /* Shader expects normalized value */
-    shader.setHueAdjust(wrapRange(hue, 0, 359) / 360.0f);
-    
-    FBO::bind(newTex.fbo);
-    p->pushSetViewport(shader);
-    p->bindTexture(shader, false);
-    
-    p->blitQuad(quad);
-    
-    p->popViewport();
-    
-    TEX::unbind();
-    
-    shState->texPool().release(p->gl);
-    p->gl = newTex;
+    if (p->megaSurface)
+    {
+        int widthMult = ceil((float) width() / glState.caps.maxTexSize);
+        int tmpWidth = ceil((float) width() / widthMult);
+        int heightMult = ceil((float) height() / glState.caps.maxTexSize);
+        int tmpHeight = ceil((float) height() / heightMult);
+        
+        Bitmap *tmp = new Bitmap(tmpWidth, tmpHeight, true);
+        IntRect sourceRect = {0, 0, tmpWidth, tmpHeight};
+        
+        pixman_region16_t originalTainted;
+        pixman_region_init(&originalTainted);
+        pixman_region_copy(&originalTainted, &p->tainted);
+        for (int i = 0; i < widthMult; i++)
+        {
+            for (int j = 0; j < heightMult; j++)
+            {
+                tmp->clear();
+                p->clearTaintedArea();
+                sourceRect.x = tmpWidth * i;
+                sourceRect.y = tmpHeight * j;
+                tmp->stretchBlt(tmp->rect(), *this, sourceRect, 255);
+                tmp->hueChange(hue);
+                stretchBlt(sourceRect, *tmp, tmp->rect(), 255);
+            }
+        }
+        delete tmp;
+        p->clearTaintedArea();
+        pixman_region_copy(&p->tainted, &originalTainted);
+        pixman_region_fini(&originalTainted);
+    }
+    else
+    {
+        TEXFBO newTex = shState->texPool().request(width(), height());
+        
+        FloatRect texRect(rect());
+        
+        Quad &quad = shState->gpQuad();
+        quad.setTexPosRect(texRect, texRect);
+        quad.setColor(Vec4(1, 1, 1, 1));
+        
+        HueShader &shader = shState->shaders().hue;
+        shader.bind();
+        /* Shader expects normalized value */
+        shader.setHueAdjust(wrapRange(hue, 0, 360) / 360.0f);
+        
+        FBO::bind(newTex.fbo);
+        p->pushSetViewport(shader);
+        p->bindTexture(shader, false);
+        
+        p->blitQuad(quad);
+        
+        p->popViewport();
+        
+        TEX::unbind();
+        
+        shState->texPool().release(p->gl);
+        p->gl = newTex;
+    }
     
     p->onModified();
 }
