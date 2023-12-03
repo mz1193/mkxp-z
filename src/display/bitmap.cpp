@@ -1819,8 +1819,6 @@ void Bitmap::replaceRaw(void *pixel_data, int size)
 {
     guardDisposed();
     
-    GUARD_MEGA;
-    
     if (hasHires()) {
         Debug() << "GAME BUG: Game is calling replaceRaw on low-res Bitmap; you may want to patch the game to improve graphics quality.";
     }
@@ -1832,8 +1830,17 @@ void Bitmap::replaceRaw(void *pixel_data, int size)
     if (size != w*h*4)
         throw Exception(Exception::MKXPError, "Replacement bitmap data is not large enough (given %i bytes, need %i)", size, requiredsize);
     
-    TEX::bind(getGLTypes().tex);
-    TEX::uploadImage(w, h, pixel_data, GL_RGBA);
+    if (p->megaSurface)
+    {
+        // This should always be true
+        if (p->megaSurface->format->BitsPerPixel == 32)
+            memcpy(p->megaSurface->pixels, pixel_data, w*h*4);
+    }
+    else
+    {
+        TEX::bind(getGLTypes().tex);
+        TEX::uploadImage(w, h, pixel_data, GL_RGBA);
+    }
     
     taintArea(IntRect(0,0,w,h));
     p->onModified();
