@@ -1666,7 +1666,6 @@ Color Bitmap::getPixel(int x, int y) const
 {
     guardDisposed();
     
-    GUARD_MEGA;
     GUARD_ANIMATED;
     
     if (hasHires()) {
@@ -1715,12 +1714,18 @@ Color Bitmap::getPixel(int x, int y) const
     if (x < 0 || y < 0 || x >= width() || y >= height())
         return Vec4();
 
-    if (!p->surface)
+    SDL_Surface *surf = nullptr;
+    if (p->megaSurface)
+        surf = p->megaSurface;
+    else if (p->surface)
+        surf = p->surface;
+    else
     {
         createSurface();
+        surf = p->surface;
     }
     
-    uint32_t pixel = getPixelAt(p->surface, p->format, x, y);
+    uint32_t pixel = getPixelAt(surf, p->format, x, y);
     
     return Color((pixel >> p->format->Rshift) & 0xFF,
                  (pixel >> p->format->Gshift) & 0xFF,
@@ -1732,7 +1737,6 @@ void Bitmap::setPixel(int x, int y, const Color &color)
 {
     guardDisposed();
     
-    GUARD_MEGA;
     GUARD_ANIMATED;
     
     if (hasHires()) {
@@ -1761,17 +1765,29 @@ void Bitmap::setPixel(int x, int y, const Color &color)
         (uint8_t) clamp<double>(color.alpha, 0, 255)
     };
     
-    TEX::bind(p->gl.tex);
-    TEX::uploadSubImage(x, y, 1, 1, &pixel, GL_RGBA);
+    if (!p->megaSurface)
+    {
+        TEX::bind(p->gl.tex);
+        TEX::uploadSubImage(x, y, 1, 1, &pixel, GL_RGBA);
+    }
     
     p->addTaintedArea(IntRect(x, y, 1, 1));
     
-    /* Setting just a single pixel is no reason to throw away the
-     * whole cached surface; we can just apply the same change */
-    
-    if (p->surface)
+    SDL_Surface *surf = nullptr;
+    if (p->megaSurface)
+        surf = p->megaSurface;
+    else
     {
-        uint32_t &surfPixel = getPixelAt(p->surface, p->format, x, y);
+        /* Setting just a single pixel is no reason to throw away the
+         * whole cached surface; we can just apply the same change */
+        
+        if (p->surface)
+            surf = p->surface;
+    }
+    
+    if (surf)
+    {
+        uint32_t &surfPixel = getPixelAt(surf, p->format, x, y);
         surfPixel = SDL_MapRGBA(p->format, pixel[0], pixel[1], pixel[2], pixel[3]);
     }
     
