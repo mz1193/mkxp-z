@@ -386,17 +386,29 @@ struct BitmapPrivate
     void fillRect(const IntRect &rect,
                   const Vec4 &color)
     {
-        bindFBO();
-        
-        glState.scissorTest.pushSet(true);
-        glState.scissorBox.pushSet(normalizedRect(rect));
-        glState.clearColor.pushSet(color);
-        
-        FBO::clear();
-        
-        glState.clearColor.pop();
-        glState.scissorBox.pop();
-        glState.scissorTest.pop();
+        if (megaSurface)
+        {
+            uint8_t r, g, b, a;
+            r = clamp<float>(color.x, 0, 1) * 255.0f;
+            g = clamp<float>(color.y, 0, 1) * 255.0f;
+            b = clamp<float>(color.z, 0, 1) * 255.0f;
+            a = clamp<float>(color.w, 0, 1) * 255.0f;
+            SDL_FillRect(megaSurface, &rect, SDL_MapRGBA(format, r, g, b, a));
+        }
+        else
+        {
+            bindFBO();
+            
+            glState.scissorTest.pushSet(true);
+            glState.scissorBox.pushSet(normalizedRect(rect));
+            glState.clearColor.pushSet(color);
+            
+            FBO::clear();
+            
+            glState.clearColor.pop();
+            glState.scissorBox.pop();
+            glState.scissorTest.pop();
+        }
     }
     
     static void ensureFormat(SDL_Surface *&surf, Uint32 format)
@@ -1284,7 +1296,6 @@ void Bitmap::fillRect(const IntRect &rect, const Vec4 &color)
 {
     guardDisposed();
     
-    GUARD_MEGA;
     GUARD_ANIMATED;
     
     if (hasHires()) {
@@ -1323,8 +1334,11 @@ void Bitmap::gradientFillRect(const IntRect &rect,
 {
     guardDisposed();
     
-    GUARD_MEGA;
     GUARD_ANIMATED;
+    
+    if (rect.w <= 0 || rect.h <= 0 || rect.x >= width() || rect.y >= height() ||
+        rect.w < -rect.x || rect.h < -rect.y)
+        return;
     
     if (hasHires()) {
         int destX, destY, destWidth, destHeight;
@@ -1336,35 +1350,85 @@ void Bitmap::gradientFillRect(const IntRect &rect,
         p->selfHires->gradientFillRect(IntRect(destX, destY, destWidth, destHeight), color1, color2, vertical);
     }
 
-    SimpleColorShader &shader = shState->shaders().simpleColor;
-    shader.bind();
-    shader.setTranslation(Vec2i());
-    
-    Quad &quad = shState->gpQuad();
-    
-    if (vertical)
+
+    if (p->megaSurface)
     {
-        quad.vert[0].color = color1;
-        quad.vert[1].color = color1;
-        quad.vert[2].color = color2;
-        quad.vert[3].color = color2;
+        float progress = 0.0f;
+        float invProgress = 1.0f;
+        Color c1 = color1;
+        Color c2 = color2;
+        int orig, end;
+        uint8_t r, g, b, a;
+        float max;
+        SDL_Rect destRect = rect;
+        int *current;
+        if (vertical)
+        {
+            destRect.w = std::min(rect.w, width() - rect.x);
+            destRect.h = 1;
+            
+            current = &destRect.y;
+            orig = rect.y;
+            max = rect.h - 1;
+            end = std::min(rect.y + rect.h, height());
+        }
+        else
+        {
+            destRect.w = 1;
+            destRect.h = std::min(rect.h, height() - rect.y);
+            
+            current = &destRect.x;
+            orig = rect.x;
+            max = rect.w - 1;
+            end = std::min(rect.x + rect.w, width());
+        }
+        while (*current < end)
+        {
+            progress = (*current - orig) / max;
+            invProgress = 1.0f - progress;
+            r = round((c1.red * invProgress) + (c2.red * progress));
+            g = round((c1.green * invProgress) + (c2.green * progress));
+            b = round((c1.blue * invProgress) + (c2.blue * progress));
+            a = round((c1.alpha * invProgress) + (c2.alpha * progress));
+            Uint32 color = SDL_MapRGBA(p->format, r, g, b, a);
+            
+            SDL_FillRect(p->megaSurface, &destRect, color);
+            
+            (*current)++;
+        }
     }
     else
     {
-        quad.vert[0].color = color1;
-        quad.vert[3].color = color1;
-        quad.vert[1].color = color2;
-        quad.vert[2].color = color2;
+        SimpleColorShader &shader = shState->shaders().simpleColor;
+        shader.bind();
+        shader.setTranslation(Vec2i());
+        
+        Quad &quad = shState->gpQuad();
+        
+        if (vertical)
+        {
+            quad.vert[0].color = color1;
+            quad.vert[1].color = color1;
+            quad.vert[2].color = color2;
+            quad.vert[3].color = color2;
+        }
+        else
+        {
+            quad.vert[0].color = color1;
+            quad.vert[3].color = color1;
+            quad.vert[1].color = color2;
+            quad.vert[2].color = color2;
+        }
+        
+        quad.setPosRect(rect);
+        
+        p->bindFBO();
+        p->pushSetViewport(shader);
+        
+        p->blitQuad(quad);
+        
+        p->popViewport();
     }
-    
-    quad.setPosRect(rect);
-    
-    p->bindFBO();
-    p->pushSetViewport(shader);
-    
-    p->blitQuad(quad);
-    
-    p->popViewport();
     
     p->addTaintedArea(rect);
     
@@ -1380,7 +1444,6 @@ void Bitmap::clearRect(const IntRect &rect)
 {
     guardDisposed();
     
-    GUARD_MEGA;
     GUARD_ANIMATED;
     
     if (hasHires()) {
@@ -1394,6 +1457,8 @@ void Bitmap::clearRect(const IntRect &rect)
     }
 
     p->fillRect(rect, Vec4());
+    
+    p->substractTaintedArea(rect);
     
     p->onModified();
 }
@@ -1555,20 +1620,27 @@ void Bitmap::clear()
 {
     guardDisposed();
     
-    GUARD_MEGA;
     GUARD_ANIMATED;
     
     if (hasHires()) {
         p->selfHires->clear();
     }
 
-    p->bindFBO();
-    
-    glState.clearColor.pushSet(Vec4());
-    
-    FBO::clear();
-    
-    glState.clearColor.pop();
+    if (p->megaSurface)
+    {
+        SDL_Rect fRect = rect();
+        SDL_FillRect(p->megaSurface, &fRect, 0);
+    }
+    else
+    {
+        p->bindFBO();
+        
+        glState.clearColor.pushSet(Vec4());
+        
+        FBO::clear();
+        
+        glState.clearColor.pop();
+    }
     
     p->clearTaintedArea();
     
