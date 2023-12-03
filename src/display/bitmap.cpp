@@ -289,7 +289,7 @@ struct BitmapPrivate
     
     void allocSurface()
     {
-        surface = SDL_CreateRGBSurface(0, gl.width, gl.height, format->BitsPerPixel,
+        surface = SDL_CreateRGBSurface(0, getGLTypes().width, getGLTypes().height, format->BitsPerPixel,
                                        format->Rmask, format->Gmask,
                                        format->Bmask, format->Amask);
     }
@@ -1005,14 +1005,19 @@ static bool shrinkRects(int &sourcePos, int &sourceLen, const int &sBitmapLen,
     return ret || sourceLen == 0 || destLen == 0;
 }
 
+static uint32_t &getPixelAt(SDL_Surface *surf, SDL_PixelFormat *form, int x, int y)
+{
+    size_t offset = x*form->BytesPerPixel + y*surf->pitch;
+    uint8_t *bytes = (uint8_t*) surf->pixels + offset;
+    
+    return *((uint32_t*) bytes);
+}
+
 void Bitmap::stretchBlt(IntRect destRect,
                         const Bitmap &source, IntRect sourceRect,
                         int opacity)
 {
     guardDisposed();
-
-    // Don't need this, right? This function is fine with megasurfaces it seems
-    //GUARD_MEGA;
 
     if (source.isDisposed())
         return;
@@ -1053,7 +1058,65 @@ void Bitmap::stretchBlt(IntRect destRect,
     SDL_Surface *blitTemp = 0;
     bool touchesTaintedArea = p->touchesTaintedArea(destRect);
     
-    if (!srcSurf && opacity == 255 && !touchesTaintedArea)
+    if (p->megaSurface)
+    {
+        if (!srcSurf)
+        {
+            source.createSurface();
+            srcSurf = source.p->surface;
+        }
+        
+        if (destRect.w < 0 || destRect.h < 0)
+        {
+            // SDL can't handle negative dimensions when blitting, so we have to do it manually
+            blitTemp = SDL_CreateRGBSurface(0, sourceRect.w, sourceRect.h, p->format->BitsPerPixel,
+                                                        p->format->Rmask, p->format->Gmask,
+                                                        p->format->Bmask, p->format->Amask);
+            
+            bool flipW = destRect.w < 0;
+            bool flipH = destRect.y < 0;
+            
+            for(int dx = 0, sx = (flipW ? sourceRect.x + sourceRect.w - 1 : sourceRect.x);
+                dx < sourceRect.w; dx++, (flipW ? sx-- : sx++))
+            {
+                for(int dy = 0, sy = (flipH ? sourceRect.y + sourceRect.h - 1 : sourceRect.y);
+                    dy < sourceRect.h; dy++, (flipH ? sy-- : sy++))
+                {
+                    uint32_t &srcPixel = getPixelAt(srcSurf, p->format, sx, sy);
+                    uint32_t &destPixel = getPixelAt(blitTemp, p->format, dx, dy);
+                    destPixel = srcPixel;
+                }
+            }
+            srcSurf = blitTemp;
+            sourceRect.x = sourceRect.y = 0;
+            destRect = normalizedRect(destRect);
+        }
+        
+        if (touchesTaintedArea)
+            SDL_SetSurfaceBlendMode(srcSurf, SDL_BLENDMODE_BLEND);
+        else
+            SDL_SetSurfaceBlendMode(srcSurf, SDL_BLENDMODE_NONE);
+        
+        Uint8 tempAlpha;
+        SDL_GetSurfaceAlphaMod(srcSurf, &tempAlpha);
+        SDL_SetSurfaceAlphaMod(srcSurf, opacity);
+        
+        if(sourceRect.w == destRect.w && sourceRect.h == destRect.h)
+            SDL_BlitSurface(srcSurf, &sourceRect, p->megaSurface, &destRect);
+        else
+            SDL_BlitScaled(srcSurf, &sourceRect, p->megaSurface, &destRect);
+        
+        SDL_SetSurfaceBlendMode(srcSurf, SDL_BLENDMODE_NONE);
+        SDL_SetSurfaceAlphaMod(srcSurf, tempAlpha);
+        
+        // Delete the source surface if the source is an animation
+        if (source.p->animation.enabled && source.p->surface)
+        {
+            SDL_FreeSurface(source.p->surface);
+            source.p->surface = 0;
+        }
+    }
+    else if (!srcSurf && opacity == 255 && !touchesTaintedArea)
     {
         /* Fast blit */
         GLMeta::blitBegin(getGLTypes());
@@ -1512,12 +1575,19 @@ void Bitmap::clear()
     p->onModified();
 }
 
-static uint32_t &getPixelAt(SDL_Surface *surf, SDL_PixelFormat *form, int x, int y)
+void Bitmap::createSurface() const
 {
-    size_t offset = x*form->BytesPerPixel + y*surf->pitch;
-    uint8_t *bytes = (uint8_t*) surf->pixels + offset;
+    if (p->surface)
+        return;
+    p->allocSurface();
     
-    return *((uint32_t*) bytes);
+    p->bindFBO();
+    
+    glState.viewport.pushSet(IntRect(0, 0, width(), height()));
+    
+    gl.ReadPixels(0, 0, width(), height(), GL_RGBA, GL_UNSIGNED_BYTE, p->surface->pixels);
+    
+    glState.viewport.pop();
 }
 
 Color Bitmap::getPixel(int x, int y) const
@@ -1575,15 +1645,7 @@ Color Bitmap::getPixel(int x, int y) const
 
     if (!p->surface)
     {
-        p->allocSurface();
-        
-        FBO::bind(p->gl.fbo);
-        
-        glState.viewport.pushSet(IntRect(0, 0, width(), height()));
-        
-        gl.ReadPixels(0, 0, width(), height(), GL_RGBA, GL_UNSIGNED_BYTE, p->surface->pixels);
-        
-        glState.viewport.pop();
+        createSurface();
     }
     
     uint32_t pixel = getPixelAt(p->surface, p->format, x, y);
@@ -1906,7 +1968,6 @@ void Bitmap::drawText(const IntRect &rect, const char *str, int align)
 {
     guardDisposed();
     
-    GUARD_MEGA;
     GUARD_ANIMATED;
     
     // RGSS doesn't let you draw text backwards
@@ -2116,7 +2177,6 @@ IntRect Bitmap::textSize(const char *str)
 {
     guardDisposed();
     
-    GUARD_MEGA;
     GUARD_ANIMATED;
     
     // TODO: High-res Bitmap textSize not implemented, but I think it's the same as low-res?
@@ -2346,7 +2406,10 @@ int Bitmap::addFrame(Bitmap &source, int position)
         p->animation.frames.push_back(p->gl);
         
         if (p->surface)
+        {
             SDL_FreeSurface(p->surface);
+            p->surface = 0;
+        }
         p->gl = TEXFBO();
     }
     
@@ -2553,6 +2616,8 @@ void Bitmap::releaseResources()
 
     if (p->megaSurface)
         SDL_FreeSurface(p->megaSurface);
+    if (p->surface)
+        SDL_FreeSurface(p->surface);
     else if (p->animation.enabled) {
         p->animation.enabled = false;
         p->animation.playing = false;
