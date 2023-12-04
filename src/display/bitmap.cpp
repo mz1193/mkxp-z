@@ -652,13 +652,30 @@ Bitmap::Bitmap(int width, int height, bool isHires)
         hiresBitmap->setLores(this);
     }
 
-    TEXFBO tex = shState->texPool().request(width, height);
-    
-    p = new BitmapPrivate(this);
-    p->gl = tex;
-    p->selfHires = hiresBitmap;
-    if (p->selfHires != nullptr) {
-        p->gl.selfHires = &p->selfHires->getGLTypes();
+    if (width > glState.caps.maxTexSize || height > glState.caps.maxTexSize)
+    {
+        p = new BitmapPrivate(this);
+        SDL_Surface *surface = SDL_CreateRGBSurface(0, width, height, p->format->BitsPerPixel,
+                                                    p->format->Rmask,
+                                                    p->format->Gmask,
+                                                    p->format->Bmask,
+                                                    p->format->Amask);
+        if (!surface)
+            throw Exception(Exception::SDLError, "Error creating Bitmap: %s",
+                            SDL_GetError());
+        p->megaSurface = surface;
+        SDL_SetSurfaceBlendMode(p->megaSurface, SDL_BLENDMODE_NONE);
+    }
+    else
+    {
+        TEXFBO tex = shState->texPool().request(width, height);
+        
+        p = new BitmapPrivate(this);
+        p->gl = tex;
+        p->selfHires = hiresBitmap;
+        if (p->selfHires != nullptr) {
+            p->gl.selfHires = &p->selfHires->getGLTypes();
+        }
     }
     
     clear();
