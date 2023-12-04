@@ -1487,7 +1487,6 @@ void Bitmap::blur()
 {
     guardDisposed();
     
-    GUARD_MEGA;
     GUARD_ANIMATED;
     
     if (hasHires()) {
@@ -1496,43 +1495,113 @@ void Bitmap::blur()
 
     // TODO: Is there some kind of blur radius that we need to handle for high-res mode?
 
-    Quad &quad = shState->gpQuad();
-    FloatRect rect(0, 0, width(), height());
-    quad.setTexPosRect(rect, rect);
-    
-    TEXFBO auxTex = shState->texPool().request(width(), height());
-    
-    BlurShader &shader = shState->shaders().blur;
-    BlurShader::HPass &pass1 = shader.pass1;
-    BlurShader::VPass &pass2 = shader.pass2;
-    
-    glState.blend.pushSet(false);
-    glState.viewport.pushSet(IntRect(0, 0, width(), height()));
-    
-    TEX::bind(p->gl.tex);
-    FBO::bind(auxTex.fbo);
-    
-    pass1.bind();
-    pass1.setTexSize(Vec2i(width(), height()));
-    pass1.applyViewportProj();
-    
-    quad.draw();
-    
-    TEX::bind(auxTex.tex);
-    p->bindFBO();
-    
-    pass2.bind();
-    pass2.setTexSize(Vec2i(width(), height()));
-    pass2.applyViewportProj();
-    
-    quad.draw();
-    
-    glState.viewport.pop();
-    glState.blend.pop();
-    
-    shState->texPool().release(auxTex);
-    
-    p->onModified();
+    if(p->megaSurface)
+    {
+        int buffer = 5;
+        
+        int widthMult = 1;
+        int tmpWidth = width();
+        int bufferX = 0;
+        
+        int heightMult = 1;
+        int tmpHeight = height();
+        int bufferY = 0;
+        
+        if(width() > glState.caps.maxTexSize)
+        {
+            widthMult = ceil((float) width() / (glState.caps.maxTexSize - (buffer * 2)));
+            tmpWidth = ceil((float) width() / widthMult) + (buffer * 2);
+            bufferX = buffer;
+        }
+        if(height() > glState.caps.maxTexSize)
+        {
+            heightMult = ceil((float) height() / (glState.caps.maxTexSize - (buffer * 2)));
+            tmpHeight = ceil((float) height() / heightMult) + (buffer * 2);
+            bufferY = buffer;
+        }
+        
+        Bitmap *tmp = new Bitmap(tmpWidth + (bufferX * 2), tmpHeight + (bufferY * 2), true);
+        IntRect sourceRect = tmp->rect();
+        IntRect destRect = {};
+        
+        pixman_region16_t originalTainted;
+        pixman_region_init(&originalTainted);
+        pixman_region_copy(&originalTainted, &p->tainted);
+        for (int i = 0; i < widthMult; i++)
+        {
+            int tmpX = i ? bufferX : 0;
+            sourceRect.x = (tmpWidth - tmpX) * i;
+            destRect.x = sourceRect.x + tmpX;
+            destRect.w = sourceRect.w - (bufferX * (i ? 2 : 1));
+            
+            for (int j = 0; j < heightMult; j++)
+            {
+                int tmpY = j ? bufferY : 0;
+                sourceRect.y = (tmpHeight - tmpY) * j;
+                destRect.y = sourceRect.y + tmpY;
+                destRect.h = sourceRect.h - (bufferY * (j ? 2 : 1));
+                
+                tmp->clear();
+                p->clearTaintedArea();
+                
+                IntRect tmpRect = tmp->rect();
+                tmpRect.x = tmpRect.w - std::min(sourceRect.w, width() - sourceRect.x);
+                tmpRect.y = tmpRect.h - std::min(sourceRect.h, height() - sourceRect.y);
+                tmpRect.w = sourceRect.w;
+                tmpRect.h = sourceRect.h;
+                
+                
+                tmp->stretchBlt(tmpRect, *this, sourceRect, 255);
+                tmp->blur();
+                
+                stretchBlt(destRect, *tmp, IntRect(tmpRect.x + tmpX, tmpRect.y + tmpY, destRect.w, destRect.h), 255);
+            }
+        }
+        delete tmp;
+        p->clearTaintedArea();
+        pixman_region_copy(&p->tainted, &originalTainted);
+        pixman_region_fini(&originalTainted);
+    }
+    else
+    {
+        Quad &quad = shState->gpQuad();
+        FloatRect rect(0, 0, width(), height());
+        quad.setTexPosRect(rect, rect);
+        
+        TEXFBO auxTex = shState->texPool().request(width(), height());
+        
+        BlurShader &shader = shState->shaders().blur;
+        BlurShader::HPass &pass1 = shader.pass1;
+        BlurShader::VPass &pass2 = shader.pass2;
+        
+        glState.blend.pushSet(false);
+        glState.viewport.pushSet(IntRect(0, 0, width(), height()));
+        
+        TEX::bind(p->gl.tex);
+        FBO::bind(auxTex.fbo);
+        
+        pass1.bind();
+        pass1.setTexSize(Vec2i(width(), height()));
+        pass1.applyViewportProj();
+        
+        quad.draw();
+        
+        TEX::bind(auxTex.tex);
+        p->bindFBO();
+        
+        pass2.bind();
+        pass2.setTexSize(Vec2i(width(), height()));
+        pass2.applyViewportProj();
+        
+        quad.draw();
+        
+        glState.viewport.pop();
+        glState.blend.pop();
+        
+        shState->texPool().release(auxTex);
+        
+        p->onModified();
+    }
 }
 
 void Bitmap::radialBlur(int angle, int divisions)
