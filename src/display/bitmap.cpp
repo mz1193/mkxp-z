@@ -920,7 +920,6 @@ DEF_ATTR_RD_SIMPLE(Bitmap, Hires, Bitmap*, p->selfHires)
 void Bitmap::setHires(Bitmap *hires) {
     guardDisposed();
 
-    Debug() << "BUG: High-res Bitmap setHires not fully implemented, expect bugs";
     hires->setLores(this);
     p->selfHires = hires;
 }
@@ -2446,24 +2445,11 @@ TEXFBO &Bitmap::getGLTypes() const
 
 SDL_Surface *Bitmap::surface() const
 {
-    if (hasHires()) {
-        Debug() << "BUG: High-res Bitmap surface not implemented";
-    }
-
     return p->surface;
 }
 
 SDL_Surface *Bitmap::megaSurface() const
 {
-    if (hasHires()) {
-        if (p->megaSurface) {
-            Debug() << "BUG: High-res Bitmap megaSurface not implemented (low-res has megaSurface)";
-        }
-        if (p->selfHires->megaSurface()) {
-            Debug() << "BUG: High-res Bitmap megaSurface not implemented (high-res has megaSurface)";
-        }
-    }
-
     return p->megaSurface;
 }
 
