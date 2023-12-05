@@ -81,6 +81,10 @@ throw Exception(Exception::MKXPError, \
 
 #define OUTLINE_SIZE 1
 
+#ifndef INT16_MAX
+#define INT16_MAX 32767
+#endif
+
 /* Normalize (= ensure width and
  * height are positive) */
 static IntRect normalizedRect(const IntRect &rect)
@@ -235,8 +239,15 @@ struct BitmapPrivate
      * If we're blitting / drawing text to a cleared part
      * with full opacity, we can disregard any old contents
      * in the texture and blit to it directly, saving
-     * ourselves the expensive blending calculation */
+     * ourselves the expensive blending calculation. */
+     
+    /* pixman_region16_t supports bitmaps whose largest
+     * dimension is no more than 32767 pixels.
+     * Be certain to set pixmanUseRegion32 in the
+     * constructor for larger bitmaps. */
     pixman_region16_t tainted;
+    pixman_region32_t tainted32;
+    bool pixmanUseRegion32;
 
     // For high-resolution texture replacement.
     Bitmap *selfHires;
@@ -249,7 +260,8 @@ struct BitmapPrivate
     selfHires(0),
     selfLores(0),
     surface(0),
-    assumingRubyGC(false)
+    assumingRubyGC(false),
+    pixmanUseRegion32(false)
     {
         format = SDL_AllocFormat(SDL_PIXELFORMAT_ABGR8888);
         
@@ -273,7 +285,10 @@ struct BitmapPrivate
     {
         prepareCon.disconnect();
         SDL_FreeFormat(format);
-        pixman_region_fini(&tainted);
+        if (pixmanUseRegion32)
+            pixman_region32_fini(&tainted32);
+        else
+            pixman_region_fini(&tainted);
     }
     
     TEXFBO &getGLTypes() {
@@ -296,15 +311,31 @@ struct BitmapPrivate
     
     void clearTaintedArea()
     {
-        pixman_region_fini(&tainted);
-        pixman_region_init(&tainted);
+        if( pixmanUseRegion32)
+        {
+            pixman_region32_fini(&tainted32);
+            pixman_region32_init(&tainted32);
+        }
+        else
+        {
+            pixman_region_fini(&tainted);
+            pixman_region_init(&tainted);
+        }
     }
     
     void addTaintedArea(const IntRect &rect)
     {
         IntRect norm = normalizedRect(rect);
-        pixman_region_union_rect
-        (&tainted, &tainted, norm.x, norm.y, norm.w, norm.h);
+        if (pixmanUseRegion32)
+        {
+            pixman_region32_union_rect
+            (&tainted32, &tainted32, norm.x, norm.y, norm.w, norm.h);
+        }
+        else
+        {
+            pixman_region_union_rect
+            (&tainted, &tainted, norm.x, norm.y, norm.w, norm.h);
+        }
     }
     
     void substractTaintedArea(const IntRect &rect)
@@ -312,24 +343,49 @@ struct BitmapPrivate
         if (!touchesTaintedArea(rect))
             return;
         
-        pixman_region16_t m_reg;
-        pixman_region_init_rect(&m_reg, rect.x, rect.y, rect.w, rect.h);
-        
-        pixman_region_subtract(&tainted, &m_reg, &tainted);
-        
-        pixman_region_fini(&m_reg);
+        if (pixmanUseRegion32)
+        {
+            pixman_region32_t m_reg;
+            pixman_region32_init_rect(&m_reg, rect.x, rect.y, rect.w, rect.h);
+            
+            pixman_region32_subtract(&tainted32, &m_reg, &tainted32);
+            
+            pixman_region32_fini(&m_reg);
+        }
+        else
+        {
+            pixman_region16_t m_reg;
+            pixman_region_init_rect(&m_reg, rect.x, rect.y, rect.w, rect.h);
+            
+            pixman_region_subtract(&tainted, &m_reg, &tainted);
+            
+            pixman_region_fini(&m_reg);
+        }
     }
     
     bool touchesTaintedArea(const IntRect &rect)
     {
-        pixman_box16_t box;
-        box.x1 = rect.x;
-        box.y1 = rect.y;
-        box.x2 = rect.x + rect.w;
-        box.y2 = rect.y + rect.h;
-        
-        pixman_region_overlap_t result =
-        pixman_region_contains_rectangle(&tainted, &box);
+        pixman_region_overlap_t result;
+        if (pixmanUseRegion32)
+        {
+            pixman_box32_t box;
+            box.x1 = rect.x;
+            box.y1 = rect.y;
+            box.x2 = rect.x + rect.w;
+            box.y2 = rect.y + rect.h;
+            
+            result = pixman_region32_contains_rectangle(&tainted32, &box);
+        }
+        else
+        {
+            pixman_box16_t box;
+            box.x1 = rect.x;
+            box.y1 = rect.y;
+            box.x2 = rect.x + rect.w;
+            box.y2 = rect.y + rect.h;
+            
+            result = pixman_region_contains_rectangle(&tainted, &box);
+        }
         
         return result != PIXMAN_REGION_OUT;
     }
@@ -534,6 +590,12 @@ Bitmap::Bitmap(const char *filename)
     
     if (handler.gif) {
         p = new BitmapPrivate(this);
+        if (handler.gif->width > INT16_MAX || handler.gif->height > INT16_MAX)
+        {
+            p->pixmanUseRegion32 = true;
+            pixman_region_fini(&p->tainted);
+            pixman_region32_init(&p->tainted32);
+        }
 
         p->selfHires = hiresBitmap;
         
@@ -678,6 +740,12 @@ Bitmap::Bitmap(int width, int height, bool isHires)
         }
     }
     
+    if (width > INT16_MAX || height > INT16_MAX)
+    {
+        p->pixmanUseRegion32 = true;
+        pixman_region_fini(&p->tainted);
+        pixman_region32_init(&p->tainted32);
+    }
     clear();
 }
 
@@ -724,6 +792,12 @@ Bitmap::Bitmap(void *pixeldata, int width, int height)
         SDL_FreeSurface(surface);
     }
     
+    if (width > INT16_MAX || height > INT16_MAX)
+    {
+        p->pixmanUseRegion32 = true;
+        pixman_region_fini(&p->tainted);
+        pixman_region32_init(&p->tainted32);
+    }
     p->addTaintedArea(rect());
 }
 
@@ -788,7 +862,17 @@ Bitmap::Bitmap(const Bitmap &other, int frame)
         }
     }
     
-    p->addTaintedArea(rect());
+    if (width() > INT16_MAX || height() > INT16_MAX)
+    {
+        p->pixmanUseRegion32 = true;
+        pixman_region_fini(&p->tainted);
+        pixman_region32_init(&p->tainted32);
+        pixman_region32_copy(&p->tainted32, &other.p->tainted32);
+    }
+    else
+    {
+        pixman_region_copy(&p->tainted, &other.p->tainted);
+    }
 }
 
 Bitmap::Bitmap(TEXFBO &other)
@@ -818,6 +902,12 @@ Bitmap::Bitmap(TEXFBO &other)
         GLMeta::blitEnd();
     }
 
+    if (width() > INT16_MAX || height() > INT16_MAX)
+    {
+        p->pixmanUseRegion32 = true;
+        pixman_region_fini(&p->tainted);
+        pixman_region32_init(&p->tainted32);
+    }
     p->addTaintedArea(rect());
 }
 
@@ -878,6 +968,12 @@ void Bitmap::initFromSurface(SDL_Surface *imgSurf, Bitmap *hiresBitmap, bool for
         TEX::uploadImage(p->gl.width, p->gl.height, imgSurf->pixels, GL_RGBA);
     }
     
+    if (width() > INT16_MAX || height() > INT16_MAX)
+    {
+        p->pixmanUseRegion32 = true;
+        pixman_region_fini(&p->tainted);
+        pixman_region32_init(&p->tainted32);
+    }
     p->addTaintedArea(rect());
 }
 
@@ -1524,8 +1620,17 @@ void Bitmap::blur()
         IntRect destRect = {};
         
         pixman_region16_t originalTainted;
-        pixman_region_init(&originalTainted);
-        pixman_region_copy(&originalTainted, &p->tainted);
+        pixman_region32_t originalTainted32;
+        if (p->pixmanUseRegion32)
+        {
+            pixman_region32_init(&originalTainted32);
+            pixman_region32_copy(&originalTainted32, &p->tainted32);
+        }
+        else
+        {
+            pixman_region_init(&originalTainted);
+            pixman_region_copy(&originalTainted, &p->tainted);
+        }
         for (int i = 0; i < widthMult; i++)
         {
             int tmpX = i ? bufferX : 0;
@@ -1558,8 +1663,16 @@ void Bitmap::blur()
         }
         delete tmp;
         p->clearTaintedArea();
-        pixman_region_copy(&p->tainted, &originalTainted);
-        pixman_region_fini(&originalTainted);
+        if (p->pixmanUseRegion32)
+        {
+            pixman_region32_copy(&p->tainted32, &originalTainted32);
+            pixman_region32_fini(&originalTainted32);
+        }
+        else
+        {
+            pixman_region_copy(&p->tainted, &originalTainted);
+            pixman_region_fini(&originalTainted);
+        }
     }
     else
     {
@@ -2019,8 +2132,17 @@ void Bitmap::hueChange(int hue)
         IntRect sourceRect = {0, 0, tmpWidth, tmpHeight};
         
         pixman_region16_t originalTainted;
-        pixman_region_init(&originalTainted);
-        pixman_region_copy(&originalTainted, &p->tainted);
+        pixman_region32_t originalTainted32;
+        if (p->pixmanUseRegion32)
+        {
+            pixman_region32_init(&originalTainted32);
+            pixman_region32_copy(&originalTainted32, &p->tainted32);
+        }
+        else
+        {
+            pixman_region_init(&originalTainted);
+            pixman_region_copy(&originalTainted, &p->tainted);
+        }
         for (int i = 0; i < widthMult; i++)
         {
             for (int j = 0; j < heightMult; j++)
@@ -2036,8 +2158,16 @@ void Bitmap::hueChange(int hue)
         }
         delete tmp;
         p->clearTaintedArea();
-        pixman_region_copy(&p->tainted, &originalTainted);
-        pixman_region_fini(&originalTainted);
+        if (p->pixmanUseRegion32)
+        {
+            pixman_region32_copy(&p->tainted32, &originalTainted32);
+            pixman_region32_fini(&originalTainted32);
+        }
+        else
+        {
+            pixman_region_copy(&p->tainted, &originalTainted);
+            pixman_region_fini(&originalTainted);
+        }
     }
     else
     {
