@@ -52,6 +52,7 @@ struct SpritePrivate
     Transform trans;
     
     Rect *srcRect;
+    FloatRect adjustedSrcRect;
     sigslot::connection srcRectCon;
     
     bool mirrored;
@@ -154,7 +155,8 @@ struct SpritePrivate
     
     void onSrcRectChange()
     {
-        FloatRect rect = srcRect->toFloatRect();
+        adjustedSrcRect = srcRect->toFloatRect();
+        FloatRect &rect = adjustedSrcRect;
         Vec2i bmSize;
         
         if (!nullOrDisposed(bitmap))
@@ -162,6 +164,22 @@ struct SpritePrivate
         
         /* Clamp the rectangle so it doesn't reach outside
          * the bitmap bounds */
+        if (rect.x < 0)
+        {
+            rect.w += rect.x;
+            trans.setSrcRectOrigin(Vec2(rect.x, trans.getSrcRectOrigin().y));
+        }
+        else if(trans.getSrcRectOrigin().x != 0)
+            trans.setSrcRectOrigin(Vec2(0, trans.getSrcRectOrigin().y));
+        if (rect.y < 0)
+        {
+            rect.h += rect.y;
+            trans.setSrcRectOrigin(Vec2(trans.getSrcRectOrigin().x, rect.y));
+        }
+        else if(trans.getSrcRectOrigin().y != 0)
+            trans.setSrcRectOrigin(Vec2(trans.getSrcRectOrigin().x, 0));
+        rect.x = clamp<int>(rect.x, 0, bmSize.x);
+        rect.y = clamp<int>(rect.y, 0, bmSize.y);
         rect.w = clamp<int>(rect.w, 0, bmSize.x-rect.x);
         rect.h = clamp<int>(rect.h, 0, bmSize.y-rect.y);
         
@@ -214,30 +232,34 @@ struct SpritePrivate
             return;
         }
         
-        IntRect self;
-        self.setPos(trans.getPositionI() - (trans.getOriginI() + sceneOrig));
-        self.w = bitmap->width();
-        self.h = bitmap->height();
+        IntRect self = adjustedSrcRect;
+        self.setPos(trans.getPositionI() - (trans.getAdjustedOriginI() + sceneOrig));
         
         isVisible = SDL_HasIntersection(&self, &sceneRect);
     }
     
     void emitWaveChunk(SVertex *&vert, float phase, int width,
-                       float zoomY, int chunkY, int chunkLength)
+                       float zoomY, int chunkY, int chunkLength, int offsetLength)
     {
-        float wavePos = phase + (chunkY / (float) wave.length) * (float) (M_PI * 2);
-        float chunkX = sin(wavePos) * wave.amp;
         
-        FloatRect tex(0, chunkY / zoomY, width, chunkLength / zoomY);
-        FloatRect pos = tex;
-        pos.x = chunkX;
+        float wavePos = phase + ((offsetLength + chunkY) / (float) wave.length) * (float) (M_PI * 2);
+        float chunkX = sin(wavePos) * wave.amp / trans.getScale().x;
+        chunkY = std::max(chunkY, 0);
         
-        Quad::setTexPosRect(vert, mirrored ? tex.hFlipped() : tex, pos);
+        FloatRect pos(chunkX, chunkY / zoomY, adjustedSrcRect.w, chunkLength / zoomY);
+        
+        FloatRect tex = mirrored ? adjustedSrcRect.hFlipped() : adjustedSrcRect;
+        tex.y += pos.y;
+        tex.h = pos.h;
+        
+        Quad::setTexPosRect(vert, tex, pos);
         vert += 4;
     }
     
     void updateWave()
     {
+        wave.dirty = false;
+        
         if (nullOrDisposed(bitmap))
             return;
         
@@ -249,8 +271,8 @@ struct SpritePrivate
         
         wave.active = true;
         
-        int width = srcRect->width;
-        int height = srcRect->height;
+        int width = adjustedSrcRect.w;
+        int height = adjustedSrcRect.h;
         float zoomY = trans.getScale().y;
         
         if (wave.amp < -(width / 2))
@@ -266,12 +288,19 @@ struct SpritePrivate
         {
             wave.qArray.resize(1);
             
-            int x = -wave.amp;
-            int w = width - x * 2;
+            int x = std::max<int>(-wave.amp + trans.getSrcRectOrigin().x, 0);
+            int w = std::min<int>(srcRect->width + wave.amp + trans.getSrcRectOrigin().x, width) - x;
             
-            FloatRect tex(x, srcRect->y, w, srcRect->height);
+            FloatRect pos(x, 0, w, adjustedSrcRect.h);
+            FloatRect tex = mirrored ? adjustedSrcRect.hFlipped() : adjustedSrcRect;
+            tex.x += mirrored ? -pos.x : pos.x;
+            tex.w = mirrored ? -pos.w : pos.w;
             
-            Quad::setTexPosRect(&wave.qArray.vertices[0], tex, tex);
+            // FIXME: This is supposed to squish the sprite, not crop it.
+            //        The squishing also applies to negative positions or overflowing dimensions.
+            //        This sounds a little complicated to implement for child bitmaps, and
+            //        this was horribly broken without complaint before now, so I'll just leave it for now.
+            Quad::setTexPosRect(&wave.qArray.vertices[0], tex, pos);
             wave.qArray.commit();
             
             return;
@@ -280,8 +309,11 @@ struct SpritePrivate
         /* The length of the sprite as it appears on screen */
         int visibleLength = height * zoomY;
         
+        /* A negative position in the srcRect affects the wave position */
+        int offsetLength = -trans.getSrcRectOrigin().y * zoomY;
+        
         /* First chunk length (aligned to 8 pixel boundary */
-        int firstLength = ((int) trans.getPosition().y) % 8;
+        int firstLength = 8 - (((int) trans.getPosition().y + offsetLength) % 8);
         
         /* Amount of full 8 pixel chunks in the middle */
         int chunks = (visibleLength - firstLength) / 8;
@@ -295,13 +327,13 @@ struct SpritePrivate
         float phase = (wave.phase * (float) M_PI) / 180.0f;
         
         if (firstLength > 0)
-            emitWaveChunk(vert, phase, width, zoomY, 0, firstLength);
+            emitWaveChunk(vert, phase, width, zoomY, -offsetLength % 8, firstLength, offsetLength);
         
         for (int i = 0; i < chunks; ++i)
-            emitWaveChunk(vert, phase, width, zoomY, firstLength + i * 8, 8);
+            emitWaveChunk(vert, phase, width, zoomY, firstLength + i * 8, 8, offsetLength);
         
         if (lastLength > 0)
-            emitWaveChunk(vert, phase, width, zoomY, firstLength + chunks * 8, lastLength);
+            emitWaveChunk(vert, phase, width, zoomY, firstLength + chunks * 8, lastLength, offsetLength);
         
         wave.qArray.commit();
     }
@@ -311,7 +343,6 @@ struct SpritePrivate
         if (wave.dirty)
         {
             updateWave();
-            wave.dirty = false;
         }
         
         updateVisibility();
@@ -570,8 +601,11 @@ void Sprite::update()
     
     Flashable::update();
     
-    p->wave.phase += p->wave.speed / 180;
-    p->wave.dirty = true;
+    if (p->wave.speed != 0)
+    {
+        p->wave.phase += p->wave.speed / 180;
+        p->wave.dirty = true;
+    }
 }
 
 /* SceneElement */
