@@ -78,7 +78,7 @@ if $DEBUG || $TEST
 					end
 					# if object is disposed already during initialization, dont add it
 					unless obj.disposed? 
-						if $DEBUG && GOBJ_ALLOW_VIEWPORT_DISPOSAL && obj.method_defined?(:viewport) && obj.method_defined?(:viewport=)
+						if $DEBUG && GOBJ_ALLOW_VIEWPORT_DISPOSAL && obj.class.method_defined?(:viewport) && obj.class.method_defined?(:viewport=)
 							ary[3] = obj.viewport.object_id
 						end
 						$gobj.push(ary) 
