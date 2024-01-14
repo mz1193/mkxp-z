@@ -2124,11 +2124,19 @@ IntRect Bitmap::textSize(const char *str)
 
     TTF_Font *font = p->font->getSdlFont();
     
-    std::string fixed = fixupString(str);
-    str = fixed.c_str();
+    // freetype sometimes treats the last character of the as being
+    // a pixel wider than it should be. Adding a space at the end and then
+    // removing it's width should make character-by-character text
+    // more accurate.
+    std::string fixed = fixupString(str) + " ";
     
     int w, h;
-    TTF_SizeUTF8(font, str, &w, &h);
+    TTF_SizeUTF8(font, fixed.c_str(), &w, &h);
+    
+    std::string space = " ";
+    int ws;
+    TTF_SizeUTF8(font, space.c_str(), &ws, 0);
+    w -= ws;
     
     /* If str is one character long, *endPtr == 0 */
     const char *endPtr;
