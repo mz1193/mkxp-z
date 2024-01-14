@@ -173,6 +173,7 @@ if $DEBUG || $TEST
 					$gobj.delete_if { |o|
 						o[3] == self.object_id
 					}
+					dispose_gobj
 				end
 			end
 		end
