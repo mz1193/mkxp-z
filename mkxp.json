@@ -369,6 +369,19 @@
     //             "Times New Roman>Liberation Serif"]
 
 
+    // RGSS renders text using pixel size.
+    // Historically, however, mkxp used a different method
+    // to determine the size that typically produced different
+    // results. Since this will cause rendering problems with
+    // games that were made for mkxp, this setting can be used
+    // to choose the method.
+    // Setting it to 0 defaults it to the value of rgssVersion.
+    // Set it 1 to use the old method, and anything else to use RGSS's method.
+    // (default: 0)
+    //
+    // "fontSizeMethod": 0,
+
+
     // Because mkxp is usually distributed as a stand alone
     // build, no predefined load paths are initialized
     // ($:, $LOAD_PATH) in the MRI backend. With this option,

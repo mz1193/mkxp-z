@@ -110,6 +110,7 @@ struct Config {
     std::vector<std::string> patches;
     
     std::vector<std::string> fontSubs;
+    int fontSizeMethod;
     
     std::vector<std::string> rubyLoadpaths;
 

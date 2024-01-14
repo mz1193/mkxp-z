@@ -212,28 +212,37 @@ _TTF_Font *SharedFontState::getFont(std::string family,
 		shState->fileSystem().openReadRaw(*ops, path, true);
 	}
 
-	// Setting the initial dpi too low fails
-	int dpi = 50;
-	font = TTF_OpenFontDPIRW(ops, 1, size, dpi, dpi);
-
-	if (!font)
-		throw Exception(Exception::SDLError, "%s", SDL_GetError());
-
-	// Figure out the dpi needed. It varies by font.
-	// There can be more than one for a given height, which potentially have different widths,
-	// but the range shrinks toward the biggest one as the size gets bigger
-	// Using the biggest one
-	while(TTF_FontHeight(font) <= size)
+	if(shState->config().fontSizeMethod == 1 || (shState->config().fontSizeMethod == 0 && rgssVer == 1))
 	{
-		++dpi;
-		TTF_SetFontSizeDPI(font, size, dpi, dpi);
-	}
-	while(TTF_FontHeight(font) > size)
+		// FIXME 0.9 is guesswork at this point
+//		float gamma = (96.0/45.0)*(5.0/14.0)*(size-5);
+//		font = TTF_OpenFontRW(ops, 1, gamma /** .90*/);
+		font = TTF_OpenFontRW(ops, 1, size* 0.90f);	}
+	else
 	{
-		--dpi;
-		TTF_SetFontSizeDPI(font, size, dpi, dpi);
+		// Setting the initial dpi too low fails
+		int dpi = 50;
+		font = TTF_OpenFontDPIRW(ops, 1, size, dpi, dpi);
+
+		if (!font)
+			throw Exception(Exception::SDLError, "%s", SDL_GetError());
+
+		// Figure out the dpi needed. It varies by font.
+		// There can be more than one for a given height, which potentially have different widths,
+		// but the range shrinks toward the biggest one as the size gets bigger
+		// Using the biggest one
+		while(TTF_FontHeight(font) <= size)
+		{
+			++dpi;
+			TTF_SetFontSizeDPI(font, size, dpi, dpi);
+		}
+		while(TTF_FontHeight(font) > size)
+		{
+			--dpi;
+			TTF_SetFontSizeDPI(font, size, dpi, dpi);
+		}
 	}
-	
+
 	p->pool.insert(key, font);
 
 	return font;
