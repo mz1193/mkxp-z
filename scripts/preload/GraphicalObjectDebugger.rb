@@ -43,24 +43,27 @@ if $DEBUG || $TEST
 	# dispose of them yourself, and therefore wish to be notified if an object is
 	# garbage collected without manual disposal
 	
+	GOBJ_IGNORE_HIDDEN = true
+	# Ignore undisposed objects that aren't receiving draw calls
+	
 	# --- End Setup
 	
 	if GOBJ_NOTIFY_LEAK || GOBJ_DEBUG_FILE
 		
-		$gobj = []
+		$gobj = {}
 		$gobj_queue = []
+		$gobj_viewport = nil
+		if ($DEBUG && GOBJ_ALLOW_VIEWPORT_DISPOSAL) || GOBJ_IGNORE_HIDDEN
+			$gobj_viewport = {}
+		end
 		
 		[Sprite, Plane, Window, Tilemap].each { |cl|
-			class << cl
-				alias new_gobj new unless method_defined?(:new_gobj)
-				def new(*args)
-					obj = new_gobj(*args)
-					# #0: object_id,
-					# #1: The active scene
-					# #2: caller list,
-					# #3: viewport.object_id (Used by XP for disposals),
-					# #4: creation time,
-					# #5: Class name
+			cl.class_eval {
+				alias dispose_gobj dispose unless method_defined?(:dispose_gobj)
+				alias opacity_gobj opacity= unless method_defined?(:opacity_gobj) || !method_defined?(:opacity=)
+				alias initialize_gobj initialize unless method_defined?(:initialize_gobj)
+				def initialize(*args)
+					ret = initialize_gobj(*args)
 					scene = nil.class
 					begin
 						if Object.const_defined?("SceneManager") # Just Ace, I think
@@ -70,50 +73,108 @@ if $DEBUG || $TEST
 						end
 					rescue Exception
 					end
-					ary = [obj.object_id, scene, nil, nil, Time.now, self.name]
+					o = {
+					        "oid" => self.object_id,     # object_id
+					        "scene" => scene,            # The active scene
+					        "caller" => nil,             # caller list
+					        "vpid" => nil,               # viewport.object_id (Used by XP for disposals),
+					        "time" => Time.now,          # creation time
+					        "class" => self.class.name,  # Class name
+					        "oVis" => self.visible,      # object.visible
+					        "vpVis" => true,             # viewport.visible
+					        "opacity" => true            # object.opacity
+					    }
 					if GOBJ_ABRIDGED_LOG
-						ary[2] = (caller[0..0]) if GOBJ_DEBUG_FILE # add caller list if debug file is enabled
+						o["caller"] = caller[0..0] if GOBJ_DEBUG_FILE # add caller list if debug file is enabled
 					else
-						ary[2] = (caller) if GOBJ_DEBUG_FILE # add caller list if debug file is enabled      
+						o["caller"] = caller if GOBJ_DEBUG_FILE # add caller list if debug file is enabled
 					end
 					# if object is disposed already during initialization, dont add it
-					unless obj.disposed? 
-						if $DEBUG && GOBJ_ALLOW_VIEWPORT_DISPOSAL && obj.class.method_defined?(:viewport) && obj.class.method_defined?(:viewport=)
-							ary[3] = obj.viewport.object_id
+					unless self.disposed?
+						if $gobj_viewport && self.class.method_defined?(:viewport) && self.viewport
+							vp = self.viewport
+							o["vpid"] = vp.object_id
+							o["vpVis"] = !self.viewport.disposed?() && self.viewport.visible
+							if !vp.disposed?()
+								vpHash = ($gobj_viewport[o["vpid"]] ||= {})
+								vpHash[o["oid"]] = nil
+							end
 						end
-						$gobj.push(ary) 
-						ObjectSpace.define_finalizer(obj, Kernel.method(:gobj_process_finalizer))
+						$gobj[self.object_id] = o
+						ObjectSpace.define_finalizer(self, Kernel.method(:gobj_process_finalizer))
 					end
-					obj
+					ret
 				end
-				
-			end
-			
-			cl.class_eval {
-				alias dispose_gobj dispose unless method_defined?(:dispose_gobj)
 				def dispose
 					gobj_exempt   # remove from global reference
 					dispose_gobj # original dispose
 				end
 				
-				def gobj_exempt
-					$gobj.delete_if { |a| a[0] == self.object_id } 
+				if GOBJ_IGNORE_HIDDEN
+					alias visible_gobj visible= unless method_defined?(:visible_gobj)
+					def visible=(*args)
+						visible_gobj(*args)
+						oid = self.object_id
+						o = $gobj[oid]
+						if o
+							o["oVis"] = self.visible
+						end
+					end
 				end
 				
-				if $DEBUG && GOBJ_ALLOW_VIEWPORT_DISPOSAL && method_defined?(:viewport) && method_defined?(:viewport=)
+				if GOBJ_IGNORE_HIDDEN
+					if method_defined?(:opacity=)
+						def opacity=(*args)
+							opacity_gobj(*args)
+							o = $gobj[self.object_id]
+								if o
+									o["opacity"] = self.opacity > 0
+								end
+						end
+					end
+				end
+				
+				def gobj_exempt
+					o = $gobj[self.object_id]
+					if o
+						if $gobj_viewport && o["vpid"]
+							vp = $gobj_viewport[o["vpid"]]
+							if vp
+								vp.delete(self.object_id)
+							end
+						end
+						$gobj.delete(self.object_id)
+					end
+				end
+				
+				if method_defined?(:viewport=) && $gobj_viewport
 					alias viewport_gobj viewport= unless method_defined?(:viewport_gobj)
 					def viewport=(*args)
 						ret = viewport_gobj(*args)
-						vp = viewport
-						if vp && !vp.disposed?
-							ary[3] = viewport.object_id
-						else
-							ary[3] = nil
+						vp = self.viewport
+						oid = self.object_id
+						o = $gobj
+						if o
+							if $gobj_viewport.include?(o["vpid"])
+								$gobj_viewport[o["vpid"]].delete(oid)
+							end
+							if vp
+								vpHash = ($gobj_viewport[vp.object_id] ||= {})
+								o["vpid"] = vp.object_id
+								if !vp.disposed?()
+									o["vpVis"] = vp.visible
+									vpHash[oid] = nil
+								else
+									o["vpVis"] = false
+								end
+							else
+								o["vpid"] = nil
+								o["vpVis"] = true
+							end
 						end
 						return ret
 					end
 				end
-				
 			} # class eval
 		} # each class
 		
@@ -122,13 +183,13 @@ if $DEBUG || $TEST
 			def update
 				begin
 					if $gobj_queue.size > 0
-						gobjs = $gobj_queue
+						gobjq = $gobj_queue
 						$gobj_queue = []
 						if GOBJ_NOTIFY_LEAK
-							System.puts "Undisposed graphical objects garbage collected: #{gobjs.collect { |o| [o[5], o[1]] }}"
+							System.puts "Undisposed graphical objects garbage collected: #{gobjq.collect { |o| [o["class"], o["scene"]] }}"
 						end
 						if GOBJ_DEBUG_FILE
-							gobjs.each{|o|
+							gobjq.each{|o|
 								gobj_log_to_file(o)
 							}
 						end
@@ -140,25 +201,33 @@ if $DEBUG || $TEST
 		end
 		
 		module Kernel
-			def gobj_process_finalizer(id)
-				ind = $gobj.index{|o| o[0] == id }
-				if ind
+			def gobj_process_finalizer(oid)
+				o = $gobj[oid]
+				if o
 					# Queue object for notifying and logging on the next Graphics.update call
-					$gobj_queue.push($gobj[ind])
-					$gobj.delete_at(ind)
+					if !GOBJ_IGNORE_HIDDEN || (o["oVis"] && o["vpVis"] && o["opacity"])
+						$gobj_queue.push(o)
+					end
+					if $gobj_viewport && o["vpid"]
+						vp = $gobj_viewport[o["vpid"]]
+						if vp
+							vp.delete(oid)
+						end
+					end
+					$gobj.delete(oid)
 				end
 			end
 			def gobj_log_to_file(o)
 				File.open("gobj.txt", "a") { |f|
 					f.print "\n-----\n"
-					f.print("Time: #{o[4]}\n")
-					f.print("Memory Leak #{o[5]}\n")
-					f.print("In Scene #{o[1]}\n")
+					f.print("Time: #{o["time"]}\n")
+					f.print("Memory Leak #{o["class"]}\n")
+					f.print("In Scene #{o["scene"]}\n")
 					f.print("Creation #{GOBJ_ABRIDGED_LOG ? 'Point' : 'Stack' }:: \n")
-					o[2].each { |e| e.gsub!(/^\{(\d+)\}\:(\d+)/i) { |m| 
+					o["caller"].each { |e| e.gsub!(/^\{(\d+)\}\:(\d+)/i) { |m| 
 						"Script #{$1} -- #{ScriptNames[$1.to_i]}, Line: #{$2}" }
 					} # close o[2].each
-					outp = o[2].join("\n")
+					outp = o["caller"].join("\n")
 					f.print(outp)
 				} # close file
 			end
@@ -166,14 +235,49 @@ if $DEBUG || $TEST
 		
 		ScriptNames = {}
 		
-		if $DEBUG && GOBJ_ALLOW_VIEWPORT_DISPOSAL
+		if $gobj_viewport
 			class Viewport
 				alias dispose_gobj dispose unless method_defined?(:dispose_gobj)
 				def dispose
-					$gobj.delete_if { |o|
-						o[3] == self.object_id
-					}
+					vid = self.object_id
+					if $DEBUG && GOBJ_ALLOW_VIEWPORT_DISPOSAL
+						vpHash = $gobj_viewport[vid]
+						if vpHash
+							vpHash.keys { |oid|
+								$gobj.delete(oid)
+							}
+							$gobj_viewport.delete(vid)
+						end
+					elsif GOBJ_IGNORE_HIDDEN
+						vpHash = $gobj_viewport[vid]
+						if vpHash
+							vpHash.keys { |oid|
+								$gobj[oid]["vpVis"] = false
+							}
+							$gobj_viewport.delete(vid)
+						end
+					end
+					
 					dispose_gobj
+				end
+				if GOBJ_IGNORE_HIDDEN
+					alias visible_gobj visible= unless method_defined?(:visible_gobj)
+					def visible=(*args)
+						visible_gobj(*args)
+						return if disposed?
+						vis = self.visible
+						vpHash = $gobj_viewport[self.object_id]
+						if vpHash
+							vpHash.keys { |oid|
+								o = $gobj[oid]
+								if o
+									o["vpVis"] = vis
+								else
+									vpHash.delete(oid)
+								end
+							}
+						end
+					end
 				end
 			end
 		end
