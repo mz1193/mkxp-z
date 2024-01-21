@@ -125,6 +125,9 @@ struct SharedStatePrivate
 
 		std::string archPath = config.execName + gameArchExt();
 
+		if (config.pathCache)
+			fileSystem.createPathCache();
+
 		for (size_t i = 0; i < config.patches.size(); ++i)
 			fileSystem.addPath(config.patches[i].c_str());
 
@@ -142,7 +145,7 @@ struct SharedStatePrivate
 			fileSystem.addPath(config.rtps[i].c_str());
 
 		if (config.pathCache)
-			fileSystem.createPathCache();
+			fileSystem.reloadPathCache();
 
 		fileSystem.initFontSets(fontState);
 

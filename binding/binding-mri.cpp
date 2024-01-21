@@ -375,7 +375,7 @@ RB_METHOD(mkxpDesensitize) {
     SafeStringValue(filename);
     
     return rb_utf8_str_new_cstr(
-                                shState->fileSystem().desensitize(RSTRING_PTR(filename)));
+                                shState->fileSystem().desensitize(RSTRING_PTR(filename)).c_str());
 }
 
 RB_METHOD(mkxpPuts) {
